@@ -217,6 +217,284 @@ const alertRules = [
     }
 ];
 
+
+// POST /vehicles
+app.post('/vehicles', async (req, res) => {
+    try {
+        const {
+            license_plate,
+            type,
+            driver_id,
+            brand,
+            model,
+            year,
+            fuel_type,
+            mileage_km,
+            last_service_km,
+            next_service_km
+        } = req.body;
+
+        // ✅ validation
+        if (!license_plate || !type) {
+            return res.status(400).json({
+                error: {
+                    code: 'INVALID_INPUT',
+                    message: 'license_plate และ type จำเป็นต้องมี',
+                    details: {}
+                }
+            });
+        }
+
+        // ✅ check license ซ้ำ
+        const [existing] = await conn.query(
+            'SELECT id FROM vehicles WHERE license_plate = ?',
+            [license_plate]
+        );
+
+        if (existing.length > 0) {
+            return res.status(400).json({
+                error: {
+                    code: 'DUPLICATE_LICENSE',
+                    message: 'license_plate นี้มีอยู่แล้ว',
+                    details: {}
+                }
+            });
+        }
+
+        // ✅ insert
+
+        await conn.query(
+            `INSERT INTO vehicles (
+                id,
+                license_plate,
+                type,
+                status,
+                driver_id,
+                brand,
+                model,
+                year,
+                fuel_type,
+                mileage_km,
+                last_service_km,
+                next_service_km
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                id,
+                license_plate,
+                type,
+                'IDLE', // default
+                driver_id || null,
+                brand || null,
+                model || null,
+                year || null,
+                fuel_type || null,
+                mileage_km || 0,
+                last_service_km || null,
+                next_service_km || null
+            ]
+        );
+
+        res.json({
+            success: true,
+            data: { id }
+        });
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({
+            error: {
+                code: 'SERVER_ERROR',
+                message: err.message,
+                details: {}
+            }
+        });
+    }
+});
+
+
+// POST /drivers
+app.post('/drivers', async (req, res) => {
+    try {
+        const {
+            name,
+            license_number,
+            license_expires_at,
+            phone,
+            status
+        } = req.body;
+
+        // ✅ validation
+        if (!name || !license_number || !license_expires_at || !phone) {
+            return res.status(400).json({
+                error: {
+                    code: 'INVALID_INPUT',
+                    message: 'name, license_number, license_expires_at, phone จำเป็นต้องมี',
+                    details: {}
+                }
+            });
+        }
+
+        // ✅ check license ซ้ำ
+        const [existing] = await conn.query(
+            'SELECT id FROM drivers WHERE license_number = ?',
+            [license_number]
+        );
+
+        if (existing.length > 0) {
+            return res.status(400).json({
+                error: {
+                    code: 'DUPLICATE_LICENSE',
+                    message: 'license_number นี้ถูกใช้แล้ว',
+                    details: {}
+                }
+            });
+        }
+  
+
+        // ✅ insert
+        await conn.query(
+                `INSERT INTO drivers (
+                id,
+                name,
+                license_number,
+                license_expires_at,
+                phone,
+                status
+            ) VALUES (?, ?, ?, ?, ?, ?)`,
+            [
+                id,
+                name,
+                license_number,
+                license_expires_at,
+                phone,
+                status || 'ACTIVE'
+            ]
+        );
+
+        res.json({
+            success: true,
+            data: { id }
+        });
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({
+            error: {
+                code: 'SERVER_ERROR',
+                message: err.message,
+                details: {}
+            }
+        });
+    }
+});
+
+
+// POST /trips
+app.post('/trips', async (req, res) => {
+    try {
+        const {
+            vehicle_id,
+            driver_id,
+            origin,
+            destination,
+            distance_km,
+            cargo_type,
+            cargo_weight_kg,
+            started_at,
+            ended_at
+        } = req.body;
+
+        // ✅ validation
+        if (!vehicle_id || !driver_id || !origin || !destination) {
+            return res.status(400).json({
+                error: {
+                    code: 'INVALID_INPUT',
+                    message: 'vehicle_id, driver_id, origin, destination จำเป็นต้องมี',
+                    details: {}
+                }
+            });
+        }
+
+        // ✅ check vehicle exists
+        const [vehicle] = await conn.query(
+            'SELECT id FROM vehicles WHERE id = ?',
+            [vehicle_id]
+        );
+
+        if (vehicle.length === 0) {
+            return res.status(400).json({
+                error: {
+                    code: 'INVALID_VEHICLE',
+                    message: 'vehicle_id ไม่ถูกต้อง',
+                    details: {}
+                }
+            });
+        }
+
+        // ✅ check driver exists
+        const [driver] = await conn.query(
+            'SELECT id FROM drivers WHERE id = ?',
+            [driver_id]
+        );
+
+        if (driver.length === 0) {
+            return res.status(400).json({
+                error: {
+                    code: 'INVALID_DRIVER',
+                    message: 'driver_id ไม่ถูกต้อง',
+                    details: {}
+                }
+            });
+        }
+
+
+        // ✅ insert
+        await conn.query(
+            `INSERT INTO trips (
+                id,
+                vehicle_id,
+                driver_id,
+                status,
+                origin,
+                destination,
+                distance_km,
+                cargo_type,
+                cargo_weight_kg,
+                started_at,
+                ended_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                id,
+                vehicle_id,
+                driver_id,
+                'SCHEDULED',
+                origin,
+                destination,
+                distance_km || null,
+                cargo_type || null,
+                cargo_weight_kg || null,
+                started_at || null,
+                ended_at || null
+            ]
+        );
+
+        res.json({
+            success: true,
+            data: { id }
+        });
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({
+            error: {
+                code: 'SERVER_ERROR',
+                message: err.message,
+                details: {}
+            }
+        });
+    }
+});
+
 const runAlerts = async () => {
     const [vehicles] = await conn.query('SELECT * FROM vehicles');
 
@@ -231,6 +509,114 @@ const runAlerts = async () => {
         );
 };
 
+
+
+// POST /checkpoints
+app.post('/checkpoints', async (req, res) => {
+    try {
+        const {
+            trip_id,
+            sequence,
+            location_name,
+            latitude,
+            longitude,
+            purpose,
+            notes,
+            arrived_at,
+            departed_at
+        } = req.body;
+
+        // ✅ validation
+        if (!trip_id || sequence === undefined || !location_name) {
+            return res.status(400).json({
+                error: {
+                    code: 'INVALID_INPUT',
+                    message: 'trip_id, sequence, location_name จำเป็นต้องมี',
+                    details: {}
+                }
+            });
+        }
+
+        // ✅ check trip exists
+        const [trip] = await conn.query(
+            'SELECT id FROM trips WHERE id = ?',
+            [trip_id]
+        );
+
+        if (trip.length === 0) {
+            return res.status(400).json({
+                error: {
+                    code: 'INVALID_TRIP',
+                    message: 'trip_id ไม่ถูกต้อง',
+                    details: {}
+                }
+            });
+        }
+
+        // ✅ check sequence ซ้ำ (unique key)
+        const [existing] = await conn.query(
+            'SELECT id FROM checkpoints WHERE trip_id = ? AND sequence = ?',
+            [trip_id, sequence]
+        );
+
+        if (existing.length > 0) {
+            return res.status(400).json({
+                error: {
+                    code: 'DUPLICATE_SEQUENCE',
+                    message: 'sequence นี้มีใน trip แล้ว',
+                    details: {}
+                }
+            });
+        }
+
+        const id = uuidv4();
+
+        // ✅ insert
+        await conn.query(
+            `INSERT INTO checkpoints (
+                id,
+                trip_id,
+                sequence,
+                status,
+                location_name,
+                latitude,
+                longitude,
+                purpose,
+                notes,
+                arrived_at,
+                departed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                id,
+                trip_id,
+                sequence,
+                'PENDING',
+                location_name,
+                latitude || null,
+                longitude || null,
+                purpose || null,
+                notes || null,
+                arrived_at || null,
+                departed_at || null
+            ]
+        );
+
+        res.json({
+            success: true,
+            data: { id }
+        });
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({
+            error: {
+                code: 'SERVER_ERROR',
+                message: err.message,
+                details: {}
+            }
+        });
+    }
+});
 // alerts
 app.get('/alerts', async (req, res) => {
     const alerts = await runAlerts();
@@ -244,6 +630,245 @@ const logAction = async (user_id, action, resource_type, result) => {
         [uuidv4(), user_id, action, resource_type, result]
     );
 };
+
+
+
+// POST /maintenance
+app.post('/maintenance', async (req, res) => {
+    try {
+        const {
+            vehicle_id,
+            type,
+            scheduled_at,
+            mileage_at_service,
+            technician,
+            cost_thb,
+            notes
+        } = req.body;
+
+        // ✅ validation
+        if (!vehicle_id || !type || !scheduled_at) {
+            return res.status(400).json({
+                error: {
+                    code: 'INVALID_INPUT',
+                    message: 'vehicle_id, type, scheduled_at จำเป็นต้องมี',
+                    details: {}
+                }
+            });
+        }
+
+        // ✅ check vehicle exists
+        const [vehicle] = await conn.query(
+            'SELECT id FROM vehicles WHERE id = ?',
+            [vehicle_id]
+        );
+
+        if (vehicle.length === 0) {
+            return res.status(400).json({
+                error: {
+                    code: 'INVALID_VEHICLE',
+                    message: 'vehicle_id ไม่ถูกต้อง',
+                    details: {}
+                }
+            });
+        }
+
+        const id = uuidv4();
+
+        // ✅ insert
+        await conn.query(
+            `INSERT INTO maintenance (
+                id,
+                vehicle_id,
+                status,
+                type,
+                scheduled_at,
+                mileage_at_service,
+                technician,
+                cost_thb,
+                notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                id,
+                vehicle_id,
+                'SCHEDULED',
+                type,
+                scheduled_at,
+                mileage_at_service || null,
+                technician || null,
+                cost_thb || null,
+                notes || null
+            ]
+        );
+
+        res.json({
+            success: true,
+            data: { id }
+        });
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({
+            error: {
+                code: 'SERVER_ERROR',
+                message: err.message,
+                details: {}
+            }
+        });
+    }
+});
+
+
+
+// POST /maintenance-parts
+app.post('/maintenance-parts', async (req, res) => {
+    try {
+        const {
+            maintenance_id,
+            part_name,
+            part_number,
+            quantity,
+            cost_thb
+        } = req.body;
+
+        // ✅ validation
+        if (!maintenance_id || !part_name) {
+            return res.status(400).json({
+                error: {
+                    code: 'INVALID_INPUT',
+                    message: 'maintenance_id และ part_name จำเป็นต้องมี',
+                    details: {}
+                }
+            });
+        }
+
+        // ✅ check maintenance exists
+        const [maintenance] = await conn.query(
+            'SELECT id FROM maintenance WHERE id = ?',
+            [maintenance_id]
+        );
+
+        if (maintenance.length === 0) {
+            return res.status(400).json({
+                error: {
+                    code: 'INVALID_MAINTENANCE',
+                    message: 'maintenance_id ไม่ถูกต้อง',
+                    details: {}
+                }
+            });
+        }
+
+        const id = uuidv4();
+
+        // ✅ insert
+        await conn.query(
+            `INSERT INTO maintenance_parts (
+                id,
+                maintenance_id,
+                part_name,
+                part_number,
+                quantity,
+                cost_thb
+            ) VALUES (?, ?, ?, ?, ?, ?)`,
+            [
+                id,
+                maintenance_id,
+                part_name,
+                part_number || null,
+                quantity || 1,
+                cost_thb || null
+            ]
+        );
+
+        res.json({
+            success: true,
+            data: { id }
+        });
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({
+            error: {
+                code: 'SERVER_ERROR',
+                message: err.message,
+                details: {}
+            }
+        });
+    }
+});
+
+
+// POST /audit-logs
+app.post('/audit-logs', authMiddleware, async (req, res) => {
+    try {
+        const {
+            action,
+            resource_type,
+            resource_id,
+            result,
+            detail
+        } = req.body;
+
+        const user_id = req.user.user_id;
+
+        // ✅ validation
+        if (!action || !resource_type || !result) {
+            return res.status(400).json({
+                error: {
+                    code: 'INVALID_INPUT',
+                    message: 'action, resource_type, result จำเป็นต้องมี',
+                    details: {}
+                }
+            });
+        }
+
+        const id = uuidv4();
+
+        const ip =
+            req.headers['x-forwarded-for'] ||
+            req.socket.remoteAddress ||
+            null;
+
+        // ✅ insert
+        await conn.query(
+            `INSERT INTO audit_logs (
+                id,
+                user_id,
+                action,
+                resource_type,
+                resource_id,
+                ip_address,
+                result,
+                detail
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                id,
+                user_id,
+                action,
+                resource_type,
+                resource_id || null,
+                ip,
+                result,
+                detail ? JSON.stringify(detail) : null
+            ]
+        );
+
+        res.json({
+            success: true,
+            data: { id }
+        });
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({
+            error: {
+                code: 'SERVER_ERROR',
+                message: err.message,
+                details: {}
+            }
+        });
+    }
+});
 
 
 initMySQL();
