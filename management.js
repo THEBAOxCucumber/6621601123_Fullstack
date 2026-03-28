@@ -1,7 +1,6 @@
 const express = require('express');
 const app = express();
 
-const bodyParser = require('body-parser');
 const cors = require('cors');
 const session = require('express-session');
 const mysql = require('mysql2/promise');
@@ -14,7 +13,7 @@ const JWT_SECRET = 'secret';
 const REFRESH_SECRET = 'refresh_secret';
 const port = 9000;
 
-app.use(bodyParser.json());
+app.use(express.json());
 
 const corsOptions = {
     origin: 'http://127.0.0.1:5500',
@@ -52,6 +51,7 @@ const initMySQL = async () => {
     }
 };
 
+// POST /users
 app.post('/users', async (req, res) => {
     try {
         const { username, password, role } = req.body;
@@ -99,7 +99,7 @@ app.post('/users', async (req, res) => {
 const authMiddleware = (req, res, next) => {
     try {
         const authHeader = req.headers.authorization;
-
+        console.log("HEADER:", authHeader);
         if (!authHeader) {
             return res.status(401).json({
                 error: { message: 'No token provided' }
@@ -107,115 +107,19 @@ const authMiddleware = (req, res, next) => {
         }
 
         const token = authHeader.split(' ')[1];
-
+        console.log("TOKEN:", token);
         const decoded = jwt.verify(token, JWT_SECRET);
-
+        console.log("DECODED:", decoded);
         req.user = decoded; // เก็บ user ไว้ใช้ต่อ
 
         next(); // ไปต่อ route
     } catch (error) {
+        console.log("JWT ERROR:", error.message);
         return res.status(401).json({
             error: { message: 'Invalid token' }
         });
     }
 };
-
-app.get('/users', authMiddleware, async (req, res) => {
-    const userId = req.user.user_id;
-
-    const [users] = await conn.query(
-        'SELECT id, username, role FROM users WHERE id = ?',
-        [userId]
-    );
-
-    res.json(users[0]); // ส่ง user เดียว
-});
-
-// login
-app.post('/auth/login', async (req, res) => {
-    try {
-        const { username, password } = req.body;
-
-        const [users] = await conn.query(
-            'SELECT * FROM users WHERE username = ?',
-            [username]
-        );
-
-        if (users.length === 0) {
-            return res.status(401).json({
-                error: { code: 'INVALID_CREDENTIALS', message: 'Invalid username or password' }
-            });
-        }
-
-        const user = users[0];
-
-        const isMatch = await bcrypt.compare(password, user.password_hash);
-        if (!isMatch) {
-            return res.status(401).json({
-                error: { code: 'INVALID_CREDENTIALS', message: 'Invalid username or password' }
-            });
-        }
-
-        const accessToken = jwt.sign(
-            { user_id: user.id, role: user.role },
-            JWT_SECRET,
-            { expiresIn: '15m' }
-        );
-
-        const refreshToken = jwt.sign(
-            { user_id: user.id },
-            REFRESH_SECRET,
-            { expiresIn: '7d' }
-        );
-
-        res.json({
-            access_token: accessToken,
-            refresh_token: refreshToken
-        });
-
-    } catch (err) {
-        res.status(500).json({ error: { code: 'SERVER_ERROR', message: err.message } });
-    }
-});
-
-//checkpoints
-app.patch('/checkpoints/:id/status', async (req, res) => {
-    const { status } = req.body;
-
-    const [rows] = await conn.query(
-        'SELECT * FROM checkpoints WHERE id = ?',
-        [req.params.id]
-    );
-
-    const cp = rows[0];
-
-    const [prev] = await conn.query(
-        `SELECT * FROM checkpoints 
-         WHERE trip_id=? AND sequence = ?`,
-        [cp.trip_id, cp.sequence - 1]
-    );
-
-    if (prev.length > 0 && prev[0].status !== 'DEPARTED') {
-        return res.status(400).json({
-            error: { message: 'Previous checkpoint not completed' }
-        });
-    }
-
-    await conn.query(
-        'UPDATE checkpoints SET status=? WHERE id=?',
-        [status, cp.id]
-    );
-
-    res.json({ success: true });
-});
-
-const alertRules = [
-    {
-        name: 'Vehicle Due',
-        check: (v) => v.mileage_km >= v.next_service_km,
-        message: 'Vehicle Due for Service'
-    }
-];
 
 
 // POST /vehicles
@@ -261,8 +165,9 @@ app.post('/vehicles', async (req, res) => {
             });
         }
 
-        // ✅ insert
+        const id = await generateVehiclesId();
 
+        // ✅ insert
         await conn.query(
             `INSERT INTO vehicles (
                 id,
@@ -281,13 +186,13 @@ app.post('/vehicles', async (req, res) => {
             [
                 id,
                 license_plate,
-                type,
-                'IDLE', // default
+                "TRUCK", "VAN", "MOTORCYCLE", "PICKUP",
+                "ACTIVE", "IDLE", "MAINTENANCE", "RETIRED",
                 driver_id || null,
                 brand || null,
                 model || null,
                 year || null,
-                fuel_type || null,
+                "DIESEL", "GASOLINE", "ELECTRIC", "HYBRID",
                 mileage_km || 0,
                 last_service_km || null,
                 next_service_km || null
@@ -311,7 +216,6 @@ app.post('/vehicles', async (req, res) => {
     }
 });
 
-
 // POST /drivers
 app.post('/drivers', async (req, res) => {
     try {
@@ -323,18 +227,15 @@ app.post('/drivers', async (req, res) => {
             status
         } = req.body;
 
-        // ✅ validation
         if (!name || !license_number || !license_expires_at || !phone) {
             return res.status(400).json({
                 error: {
                     code: 'INVALID_INPUT',
-                    message: 'name, license_number, license_expires_at, phone จำเป็นต้องมี',
-                    details: {}
+                    message: 'name, license_number, license_expires_at, phone จำเป็นต้องมี'
                 }
             });
         }
 
-        // ✅ check license ซ้ำ
         const [existing] = await conn.query(
             'SELECT id FROM drivers WHERE license_number = ?',
             [license_number]
@@ -344,16 +245,16 @@ app.post('/drivers', async (req, res) => {
             return res.status(400).json({
                 error: {
                     code: 'DUPLICATE_LICENSE',
-                    message: 'license_number นี้ถูกใช้แล้ว',
-                    details: {}
+                    message: 'license_number นี้ถูกใช้แล้ว'
                 }
             });
         }
-  
 
-        // ✅ insert
+        // 🔥 ใช้ custom id
+        const id = await generateDriverId();
+
         await conn.query(
-                `INSERT INTO drivers (
+            `INSERT INTO drivers (
                 id,
                 name,
                 license_number,
@@ -367,7 +268,7 @@ app.post('/drivers', async (req, res) => {
                 license_number,
                 license_expires_at,
                 phone,
-                status || 'ACTIVE'
+                "ACTIVE", "INACTIVE", "SUSPENDED"
             ]
         );
 
@@ -381,13 +282,11 @@ app.post('/drivers', async (req, res) => {
         res.status(500).json({
             error: {
                 code: 'SERVER_ERROR',
-                message: err.message,
-                details: {}
+                message: err.message
             }
         });
     }
 });
-
 
 // POST /trips
 app.post('/trips', async (req, res) => {
@@ -447,6 +346,7 @@ app.post('/trips', async (req, res) => {
             });
         }
 
+        const id = await generateTripId();
 
         // ✅ insert
         await conn.query(
@@ -467,11 +367,11 @@ app.post('/trips', async (req, res) => {
                 id,
                 vehicle_id,
                 driver_id,
-                'SCHEDULED',
+                "SCHEDULED", "IN_PROGRESS", "COMPLETED", "CANCELLED",
                 origin,
                 destination,
                 distance_km || null,
-                cargo_type || null,
+                "GENERAL", "FRAGILE", "HAZARDOUS", "REFRIGERATED",
                 cargo_weight_kg || null,
                 started_at || null,
                 ended_at || null
@@ -516,7 +416,6 @@ app.post('/checkpoints', async (req, res) => {
     try {
         const {
             trip_id,
-            sequence,
             location_name,
             latitude,
             longitude,
@@ -527,12 +426,11 @@ app.post('/checkpoints', async (req, res) => {
         } = req.body;
 
         // ✅ validation
-        if (!trip_id || sequence === undefined || !location_name) {
+        if (!trip_id || !location_name) {
             return res.status(400).json({
                 error: {
                     code: 'INVALID_INPUT',
-                    message: 'trip_id, sequence, location_name จำเป็นต้องมี',
-                    details: {}
+                    message: 'trip_id, location_name จำเป็นต้องมี'
                 }
             });
         }
@@ -547,29 +445,21 @@ app.post('/checkpoints', async (req, res) => {
             return res.status(400).json({
                 error: {
                     code: 'INVALID_TRIP',
-                    message: 'trip_id ไม่ถูกต้อง',
-                    details: {}
+                    message: 'trip_id ไม่ถูกต้อง'
                 }
             });
         }
 
-        // ✅ check sequence ซ้ำ (unique key)
-        const [existing] = await conn.query(
-            'SELECT id FROM checkpoints WHERE trip_id = ? AND sequence = ?',
-            [trip_id, sequence]
+        // 🔥 auto generate sequence
+        const [rows] = await conn.query(
+            'SELECT MAX(sequence) as maxSeq FROM checkpoints WHERE trip_id = ?',
+            [trip_id]
         );
 
-        if (existing.length > 0) {
-            return res.status(400).json({
-                error: {
-                    code: 'DUPLICATE_SEQUENCE',
-                    message: 'sequence นี้มีใน trip แล้ว',
-                    details: {}
-                }
-            });
-        }
+        const sequence = (rows[0].maxSeq || 0) + 1;
 
-        const id = uuidv4();
+        // ✅ generate id
+        const id = await generateCheckpointId();
 
         // ✅ insert
         await conn.query(
@@ -603,7 +493,7 @@ app.post('/checkpoints', async (req, res) => {
 
         res.json({
             success: true,
-            data: { id }
+            data: { id, sequence }
         });
 
     } catch (err) {
@@ -611,27 +501,11 @@ app.post('/checkpoints', async (req, res) => {
         res.status(500).json({
             error: {
                 code: 'SERVER_ERROR',
-                message: err.message,
-                details: {}
+                message: err.message
             }
         });
     }
 });
-// alerts
-app.get('/alerts', async (req, res) => {
-    const alerts = await runAlerts();
-    res.json(alerts);
-});
-
-const logAction = async (user_id, action, resource_type, result) => {
-    await conn.query(
-        `INSERT INTO audit_logs (id, user_id, action, resource_type, result)
-         VALUES (?, ?, ?, ?, ?)`,
-        [uuidv4(), user_id, action, resource_type, result]
-    );
-};
-
-
 
 // POST /maintenance
 app.post('/maintenance', async (req, res) => {
@@ -673,7 +547,7 @@ app.post('/maintenance', async (req, res) => {
             });
         }
 
-        const id = uuidv4();
+        const id = await generateMaintenanceId();
 
         // ✅ insert
         await conn.query(
@@ -717,7 +591,6 @@ app.post('/maintenance', async (req, res) => {
         });
     }
 });
-
 
 
 // POST /maintenance-parts
@@ -809,7 +682,7 @@ app.post('/audit-logs', authMiddleware, async (req, res) => {
             detail
         } = req.body;
 
-        const user_id = req.user.user_id;
+        const user_id = req.user.id;
 
         // ✅ validation
         if (!action || !resource_type || !result) {
@@ -870,6 +743,270 @@ app.post('/audit-logs', authMiddleware, async (req, res) => {
     }
 });
 
+async function generateDriverId() {
+    const [rows] = await conn.query(`
+        SELECT id FROM drivers
+        ORDER BY id DESC
+        LIMIT 1
+    `);
+
+    if (rows.length === 0) {
+        return 'drv_001';
+    }
+
+    const lastId = rows[0].id; // เช่น drv_007
+    const number = parseInt(lastId.split('_')[1]);
+    const newNumber = number + 1;
+
+    return 'drv_' + String(newNumber).padStart(3, '0');
+}
+
+async function generateVehiclesId() {
+    const [rows] = await conn.query(`
+        SELECT id FROM vehicles
+        ORDER BY id DESC
+        LIMIT 1
+    `);
+
+    if (rows.length === 0) {
+        return 'veh_001';
+    }
+
+    const lastId = rows[0].id; // เช่น veh_007
+    const number = parseInt(lastId.split('_')[1]);
+    const newNumber = number + 1;
+
+    return 'veh_' + String(newNumber).padStart(3, '0');
+}
+
+async function generateTripId() {
+    const [rows] = await conn.query(`
+        SELECT id FROM trips
+        ORDER BY id DESC
+        LIMIT 1
+    `);
+
+    if (rows.length === 0) {
+        return 'trp_001';
+    }
+
+    const lastId = rows[0].id;
+    const number = parseInt(lastId.split('_')[1]);
+    const newNumber = number + 1;
+
+    return 'trp_' + String(newNumber).padStart(3, '0');
+}
+
+async function generateCheckpointId() {
+    const [rows] = await conn.query(`
+        SELECT id FROM checkpoints
+        ORDER BY id DESC
+        LIMIT 1
+    `);
+
+    if (rows.length === 0) {
+        return 'chk_001';
+    }
+
+    const lastId = rows[0].id;
+    const number = parseInt(lastId.split('_')[1]);
+    const newNumber = number + 1;
+
+    return 'chk_' + String(newNumber).padStart(3, '0');
+}
+
+async function generateMaintenanceId() {
+    const [rows] = await conn.query(`
+        SELECT id FROM maintenance
+        ORDER BY id DESC
+        LIMIT 1
+    `);
+
+    if (rows.length === 0) {
+        return 'mnt_001';
+    }
+
+    const lastId = rows[0].id;
+    const number = parseInt(lastId.split('_')[1]);
+    const newNumber = number + 1;
+
+    return 'mnt_' + String(newNumber).padStart(3, '0');
+}
+
+app.post('/auth/login', async (req, res) => {
+    try {
+        const { username, password } = req.body;
+
+        // 1. check input
+        if (!username || !password) {
+            return res.status(400).json({
+                error: {
+                    code: 'INVALID_INPUT',
+                    message: 'username และ password จำเป็นต้องมี'
+                }
+            });
+        }
+
+        // 2. หา user
+        const [users] = await conn.query(
+            'SELECT * FROM users WHERE username = ?',
+            [username]
+        );
+
+        if (users.length === 0) {
+            return res.status(401).json({
+                error: {
+                    code: 'INVALID_CREDENTIALS',
+                    message: 'username หรือ password ไม่ถูกต้อง'
+                }
+            });
+        }
+
+        const user = users[0];
+
+        // 3. compare password
+        const isMatch = await bcrypt.compare(password, user.password_hash);
+
+        if (!isMatch) {
+            return res.status(401).json({
+                error: {
+                    code: 'INVALID_CREDENTIALS',
+                    message: 'username หรือ password ไม่ถูกต้อง'
+                }
+            });
+        }
+
+        // 4. create token
+        const accessToken = jwt.sign(
+            {
+                id: user.id,
+                username: user.username,
+                role: user.role
+            },
+            JWT_SECRET,
+            { expiresIn: '15m' }
+        );
+
+        res.json({
+            success: true,
+            accessToken
+        });
+
+    } catch (error) {
+        res.status(500).json({
+            error: {
+                code: 'SERVER_ERROR',
+                message: error.message
+            }
+        });
+    }
+});
+
+// GET /users
+app.get('/users', authMiddleware, async (req, res) => {
+    try {
+        const { role, username } = req.query;
+
+        // ✅ เช็คสิทธิ์ (เฉพาะ ADMIN เท่านั้น)
+        if (req.user.role !== 'ADMIN') {
+            return res.status(403).json({
+                error: {
+                    code: 'FORBIDDEN',
+                    message: 'ไม่มีสิทธิ์เข้าถึงข้อมูลผู้ใช้'
+                }
+            });
+        }
+
+        // ✅ build query ตามเงื่อนไข
+        let sql = 'SELECT id, username, role FROM users WHERE 1=1';
+        let params = [];
+
+        if (role) {
+            sql += ' AND role = ?';
+            params.push(role);
+        }
+
+        if (username) {
+            sql += ' AND username LIKE ?';
+            params.push(`%${username}%`);
+        }
+
+        const [users] = await conn.query(sql, params);
+
+        res.json({
+            success: true,
+            data: users
+        });
+
+    } catch (error) {
+        res.status(500).json({
+            error: {
+                code: 'SERVER_ERROR',
+                message: error.message
+            }
+        });
+    }
+});
+
+// GET (ทุกคนดูได้)
+app.get('/vehicles', async (req, res) => {
+  const [rows] = await conn.query(`
+    SELECT 
+      id,
+      license_plate,
+      type,
+      brand,
+      model,
+      status,
+      mileage_km,
+      next_service_km,
+      driver_name
+    FROM vehicles
+  `);
+
+  res.json({
+    success: true,
+    data: rows
+  });
+});
+
+// POST (admin เท่านั้น)
+app.post('/vehicles', authMiddleware, async (req, res) => {
+  if (req.user.role !== 'ADMIN') {
+    return res.status(403).json({ message: 'Forbidden' });
+  }
+
+  const { id, license_plate, status } = req.body;
+
+  await conn.query(
+    'INSERT INTO vehicles (id, license_plate, status) VALUES (?, ?, ?)',
+    [id, license_plate, status]
+  );
+
+  res.json({ success: true });
+});
+
+app.put('/vehicles/:id', async (req, res) => {
+  const { status } = req.body;
+
+  await conn.query(
+    'UPDATE vehicles SET status = ? WHERE id = ?',
+    [status, req.params.id]
+  );
+
+  res.json({ success: true });
+});
+
+// DELETE
+app.delete('/vehicles/:id', authMiddleware, async (req, res) => {
+  if (req.user.role !== 'ADMIN') {
+    return res.status(403).json({ message: 'Forbidden' });
+  }
+
+  await conn.query('DELETE FROM vehicles WHERE id = ?', [req.params.id]);
+
+  res.json({ success: true });
+});
 
 initMySQL();
 
